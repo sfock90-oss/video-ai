@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Generateur Video IA</title>
+<style>
+  body { font-family: Arial; padding: 15px; background: #1a1a2e; color: white; margin: 0; }
+  h1 { font-size: 20px; text-align: center; }
+  textarea, input, select { width: 100%; padding: 10px; margin: 8px 0; border-radius: 8px; border: 1px solid #444; background: #0f0f1a; color: white; font-size: 14px; box-sizing: border-box; }
+  button { width: 100%; padding: 15px; border-radius: 10px; border: none; background: #6c5ce7; color: white; font-size: 16px; font-weight: bold; margin-top: 10px; }
+  button:disabled { background: #555; }
+  #status { margin: 15px 0; padding: 12px; background: #0f0f1a; border-radius: 8px; min-height: 20px; font-size: 13px; }
+  video { width: 100%; border-radius: 10px; margin-top: 15px; }
+  a { color: #a29bfe; display: block; margin-top: 10px; word-break: break-all; }
+  .hidden { display: none; }
+  label { display: block; margin-top: 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Generateur Video IA</h1>
+
+<label>Decris ta video :</label>
+<textarea id="prompt" rows="4" placeholder="Ex: un chat astronaute qui flotte dans l'espace"></textarea>
+
+<label>Duree :</label>
+<select id="duration">
+  <option value="5">5 secondes</option>
+  <option value="10">10 secondes</option>
+</select>
+
+<label>Dialogue a dire (optionnel) :</label>
+<textarea id="dialogue" rows="2" placeholder="Ex: Bonjour, je suis dans l'espace !"></textarea>
+
+<label>Cle Replicate :</label>
+<input type="password" id="replicateKey" placeholder="r8_xxxxxxxxxxxxx">
+
+<label>Cle ElevenLabs (pour la voix) :</label>
+<input type="password" id="elevenKey" placeholder="sk_xxxxxxxxxxxxx">
+
+<button id="generate-btn">Creer ma video</button>
+
+<div id="status">Pret a creer...</div>
+
+<video id="result" controls class="hidden"></video>
+<div id="downloads"></div>
+
+<script>
+const btn = document.getElementById('generate-btn');
+const statusDiv = document.getElementById('status');
+const video = document.getElementById('result');
+const downloads = document.getElementById('downloads');
+
+function dire(texte) { statusDiv.textContent = texte; }
+
+btn.onclick = async () => {
+  btn.disabled = true;
+  downloads.innerHTML = '';
+  video.classList.add('hidden');
+
+  try {
+    const prompt = document.getElementById('prompt').value.trim();
+    const duration = parseInt(document.getElementById('duration').value);
+    const dialogue = document.getElementById('dialogue').value.trim();
+    const replicateKey = document.getElementById('replicateKey').value.trim();
+    const elevenKey = document.getElementById('elevenKey').value.trim();
+
+    if (!prompt) { dire("Ecris d'abord une description !"); btn.disabled = false; return; }
+    if (!replicateKey) { dire("Il manque la cle Replicate !"); btn.disabled = false; return; }
+
+    dire("Etape 1/2 : generation video en cours... (1 a 3 minutes)");
+
+    const createRes = await fetch("https://api.replicate.com/v1/models/wan-video/wan-2.1-t2v/predictions", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + replicateKey,
+        "Content-Type": "application/json",
+        "Prefer": "wait"
+      },
+      body: JSON.stringify({ input: { prompt: prompt, duration: duration } })
+    });
+
+    let prediction = await createRes.json();
+
+    if (prediction.error) throw new Error(prediction.error);
+
+    while (prediction.status !== "succeeded" && prediction.status !== "failed" && prediction.status !== "canceled") {
+      dire("En cours... statut : " + prediction.status);
+      await new Promise(r => setTimeout(r, 4000));
+      const check = await fetch(prediction.urls.get, {
+        headers: { "Authorization": "Bearer " + replicateKey }
+      });
+      prediction = await check.json();
+    }
+
+    if (prediction.status !== "succeeded") {
+      throw new Error("La video a echoue. Essaie une autre description.");
+    }
+
+    const videoUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+    dire("Video prete !");
+
+    video.src = videoUrl;
+    video.classList.remove('hidden');
+
+    const dlVideo = document.createElement('a');
+    dlVideo.href = videoUrl;
+    dlVideo.download = 'video.mp4';
+    dlVideo.textContent = 'Telecharger la video';
+    dlVideo.target = '_blank';
+    downloads.appendChild(dlVideo);
+
+    if (dialogue && elevenKey) {
+      dire("Etape 2/2 : generation de la voix...");
+
+      const voiceRes = await fetch("https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM", {
+        method: "POST",
+        headers: {
+          "xi-api-key": elevenKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ text: dialogue, model_id: "eleven_multilingual_v2" })
+      });
+
+      if (!voiceRes.ok) throw new Error("Erreur voix. Verifie la cle ElevenLabs.");
+
+      const audioBlob = await voiceRes.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      const dlAudio = document.createElement('a');
+      dlAudio.href = audioUrl;
+      dlAudio.download = 'voix.mp3';
+      dlAudio.textContent = 'Telecharger la voix';
+      downloads.appendChild(dlAudio);
+
+      dire("Termine ! Telecharge les 2 fichiers et assemble-les dans CapCut.");
+    } else {
+      dire("Termine ! Ta video est prete.");
+    }
+
+  } catch (e) {
+    dire("Erreur : " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+};
+</script>
+</body>
+</html>
